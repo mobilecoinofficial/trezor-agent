@@ -51,6 +51,13 @@ class Client:
         with self.device:
             return self.device.sign(blob=blob, identity=identity)
 
+    def sign_mc_challenge(self, blob, identity):
+        """Sign MobileCoin blob using a private key on the device"""
+        log.debug('in sign_mc_challenge')
+        log.debug('blob: %r', blob)
+        with self.device:
+            return self.device.sign(blob=blob, identity=identity)
+
 
 def parse_ssh_blob(data):
     """Parse binary data into a dict."""

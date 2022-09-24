@@ -72,7 +72,7 @@ class LedgerNanoS(interface.Device):
     def sign(self, identity, blob):
         """Sign given blob and return the signature (as bytes)."""
         path = _expand_path(identity.get_bip32_address(ecdh=False))
-        if identity.identity_dict['proto'] == 'ssh':
+        if identity.identity_dict['proto'] == 'ssh' and len(blob) != 32:
             ins = '04'
             p1 = '00'
         else:
@@ -81,7 +81,7 @@ class LedgerNanoS(interface.Device):
         if identity.curve_name == 'nist256p1':
             p2 = '81' if identity.identity_dict['proto'] == 'ssh' else '01'
         else:
-            p2 = '82' if identity.identity_dict['proto'] == 'ssh' else '02'
+            p2 = '82' if (identity.identity_dict['proto'] == 'ssh' and len(blob) != 32) else '02'
         apdu = '80' + ins + p1 + p2
         apdu = binascii.unhexlify(apdu)
         apdu += bytearray([len(blob) + len(path) + 1])

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import base64
 
 import configargparse
 import daemon
@@ -98,6 +99,10 @@ def create_agent_parser(device_type):
                    help='Path to passphrase entry UI helper.')
     p.add_argument('--cache-expiry-seconds', type=float, default=float('inf'),
                    help='Expire passphrase from cache after this duration.')
+    p.add_argument('--pemout', type=str,
+                    help='Path to the pubkey PEM file (to be written by the agent).')
+    p.add_argument('--sign-blob', type=str,
+                    help='hex representation of 32 byte merlin transcript to sign.')
 
     g = p.add_mutually_exclusive_group()
     g.add_argument('-d', '--daemonize', default=False, action='store_true',
@@ -233,6 +238,11 @@ class JustInTimeConnection:
         conn = self.conn_factory()
         return conn.sign_ssh_challenge(blob=blob, identity=identity)
 
+    def mc_blob_sign(self, blob, identity):
+        """Sign MobileCoin 32 byte blob using the specified identity on the device"""
+        conn = self.conn_factory()
+        return conn.sign_mc_challenge(blob=blob, identity=identity)
+
 
 @contextlib.contextmanager
 def _dummy_context():
@@ -304,7 +314,29 @@ def main(device_type):
         with context:
             return run_server(conn=conn, command=command, sock_path=sock_path,
                               debug=args.debug, timeout=args.timeout)
+    elif args.sign_blob is not None:
+        if args.ecdsa_curve_name != 'ed25519':
+            print('Error: --sign-blob requires ed25519 curve')
+            return -1
+        blob = bytearray.fromhex(args.sign_blob)
+        identity = identities[0]
+        sig = conn.mc_blob_sign(blob=blob, identity=identities[0])
+        print('blob signature:')
+        print(sig.hex())
+    elif args.pemout is not None:
+        if args.ecdsa_curve_name != 'ed25519':
+            print('Error: --pemout requires ed25519 curve')
+            return -1
+        for pk in conn.public_keys():
+            with open(args.pemout, 'w') as p:
+                _,pubkey_sshenc_b64,_ = pk.split(' ')
+                pubkey= base64.b64decode(pubkey_sshenc_b64)[-32:]
+                pem_prefix = bytearray.fromhex('302a300506032b6570032100')
+                b64_pem = base64.b64encode(pem_prefix+pubkey)
+                p.write('-----BEGIN PUBLIC KEY-----\n')
+                p.write(b64_pem.decode()+'\n')
+                p.write('-----END PUBLIC KEY-----\n')
     else:
         for pk in conn.public_keys():
             sys.stdout.write(pk)
-        return 0  # success exit code
+    return 0  # success exit code
