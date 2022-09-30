@@ -71,6 +71,7 @@ class LedgerNanoS(interface.Device):
 
     def sign(self, identity, blob):
         """Sign given blob and return the signature (as bytes)."""
+        """Note (mc): The SSH/PGP Agent Ledger app an opcode for parsing and signing a ssh challenge as well as an opcode for just signing the blob. When the blob is 32 bytes, it is our Merlin transcript, so we ignore the ssh protocol marker in the identity (SSH challenges are never 32 bytes). This allows us to produce a direct ed25519 signature on a 32 byte blob."""
         path = _expand_path(identity.get_bip32_address(ecdh=False))
         if identity.identity_dict['proto'] == 'ssh' and len(blob) != 32:
             ins = '04'
