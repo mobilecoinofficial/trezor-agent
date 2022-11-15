@@ -71,8 +71,12 @@ class LedgerNanoS(interface.Device):
 
     def sign(self, identity, blob):
         """Sign given blob and return the signature (as bytes)."""
+        """Note (mc): The SSH/PGP Agent Ledger app an opcode for parsing and signing a ssh challenge as well as an opcode for just signing the blob. When the blob is 32 bytes, it is our Merlin transcript, so we ignore the ssh protocol marker in the identity (SSH challenges are never 32 bytes). This allows us to produce a direct ed25519 signature on a 32 byte blob."""
         path = _expand_path(identity.get_bip32_address(ecdh=False))
-        if identity.identity_dict['proto'] == 'ssh':
+        # ins == 04 means to parse blob as an ssh challenges and sign
+        # ins == 08 means to directly sign the blob
+        # if the blob is 32 bytes, it is a MobileCoin Merlin Transcript and we should directly sign
+        if identity.identity_dict['proto'] == 'ssh' and len(blob) != 32:
             ins = '04'
             p1 = '00'
         else:
@@ -81,7 +85,9 @@ class LedgerNanoS(interface.Device):
         if identity.curve_name == 'nist256p1':
             p2 = '81' if identity.identity_dict['proto'] == 'ssh' else '01'
         else:
-            p2 = '82' if identity.identity_dict['proto'] == 'ssh' else '02'
+            # p2 & 0x0f == 0x02 instructs to use ed25519
+            # p2 & 0x80 is a key handling flag for ssh challenge parsing varient only
+            p2 = '82' if (identity.identity_dict['proto'] == 'ssh' and len(blob) != 32) else '02'
         apdu = '80' + ins + p1 + p2
         apdu = binascii.unhexlify(apdu)
         apdu += bytearray([len(blob) + len(path) + 1])
