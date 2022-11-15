@@ -331,6 +331,9 @@ def main(device_type):
             with open(args.pemout, 'w') as p:
                 _,pubkey_sshenc_b64,_ = pk.split(' ')
                 pubkey= base64.b64decode(pubkey_sshenc_b64)[-32:]
+                # ed25519 PEM encodings all start with '302a300506032b6570032100'
+                # 06 03 2B 65 70 within identifies the ed25519 algorthim and the rest
+                # is data type specifiers and length indicators
                 pem_prefix = bytearray.fromhex('302a300506032b6570032100')
                 b64_pem = base64.b64encode(pem_prefix+pubkey)
                 p.write('-----BEGIN PUBLIC KEY-----\n')
