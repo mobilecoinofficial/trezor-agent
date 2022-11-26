@@ -7,6 +7,7 @@
 """ Fetch Ed25519 pubkey from Ledger Device or sign a hash (Merlin transcript) using one """
 
 from libagent.device.ledger import LedgerNanoS
+from libagent.device.trezor import Trezor
 from libagent.ssh.client import Client
 from libagent import device
 import base64
@@ -20,6 +21,14 @@ def create_main_parser() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         description='Interface with a Ledger Nano to output a public key or sign a hash (32 byte Merlin transcript)'
+    )
+
+    parser.add_argument(
+        '--hardware',
+        help='model of hardware to use',
+        type=str,
+        required=True,
+        choices=['ledger', 'trezor']
     )
 
     parser.add_argument(
@@ -73,7 +82,10 @@ def pem_encode(blob: bytearray) -> str:
 def main() -> None:
 
     args = create_main_parser()
-    client = Client(LedgerNanoS())
+
+    device_type = LedgerNanoS if args.hardware == 'ledger' else Trezor
+    device_type.ui = device.ui.UI(device_type=device_type, config=vars(args))
+    client = Client(device_type())
 
     identity = device.interface.Identity(identity_str=args.identity, curve_name=CURVE)
     identity.identity_dict['proto'] = 'ssh'
