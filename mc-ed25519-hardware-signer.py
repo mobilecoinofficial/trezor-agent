@@ -8,11 +8,16 @@
 
 from libagent.device.ledger import LedgerNanoS
 from libagent.device.trezor import Trezor
+from libagent.device.interface import NotFoundError
 from libagent.ssh.client import Client
 from libagent import device
-import base64
 import argparse
+import base64
+import json
+import ledgerblue
 import re
+import sys
+import trezorlib
 
 CURVE = 'ed25519'
 
@@ -79,26 +84,94 @@ def pem_encode(blob: bytearray) -> str:
     # leave off the final newline in case the string will be printed
     return f'-----BEGIN {what}-----\n{b64_pem_str}\n-----END {what}-----'
 
+
+def output_json(obj):
+    sys.stdout.write(json.dumps(obj) + '\n')
+    sys.stdout.flush()
+
+
+class UI:
+    def get_passphrase(self, prompt='Passphrase:', available_on_device=False):
+        output_json({
+            'type': 'passphrase_request',
+            'prompt': prompt,
+            'available_on_device': available_on_device,
+        })
+        return input().strip()
+
+
+    def get_pin(self, _code=None):
+        output_json({
+            'type': 'pin_request',
+        })
+        return input().strip()
+
+    def button_request(self, _code=None):
+        """Called by TrezorClient when device interaction is required."""
+        output_json({
+            'type': 'button_request',
+        })
+
+
 def main() -> None:
 
     args = create_main_parser()
 
     device_type = LedgerNanoS if args.hardware == 'ledger' else Trezor
-    device_type.ui = device.ui.UI(device_type=device_type, config=vars(args))
+    # device.ui.UI(device_type=device_type, config=vars(args)) - use this instead for the default behavior
+    device_type.ui = UI()
     client = Client(device_type())
 
     identity = device.interface.Identity(identity_str=args.identity, curve_name=CURVE)
     identity.identity_dict['proto'] = 'ssh'
 
-    if args.sign is not None:
-        blob = bytearray.fromhex(args.sign)
-        assert(len(blob) == 32), 'the HASH to be signed must be 32 bytes in length'
-        out = client.sign_mc_challenge(blob=blob, identity=identity)
-    else:
-        keys = client.export_public_keys([identity])
-        assert(len(keys)==1), f'expected exactly 1 pubkey from device but got {len(keys)}'
-        _,pubkey_sshenc_b64,_ = keys[0].split(' ')
-        out = base64.b64decode(pubkey_sshenc_b64)[-32:]
+    try:
+        if args.sign is not None:
+            blob = bytearray.fromhex(args.sign)
+            assert(len(blob) == 32), 'the HASH to be signed must be 32 bytes in length'
+            out = client.sign_mc_challenge(blob=blob, identity=identity)
+        else:
+            keys = client.export_public_keys([identity])
+            assert(len(keys)==1), f'expected exactly 1 pubkey from device but got {len(keys)}'
+            _,pubkey_sshenc_b64,_ = keys[0].split(' ')
+            out = base64.b64decode(pubkey_sshenc_b64)[-32:]
+    except NotFoundError as exc:
+        output_json({
+            'type': 'error',
+            'error_code': 'NOT_FOUND',
+            'error_str': str(exc),
+        })
+        return
+    except ledgerblue.commException.CommException as exc:
+        msg, code, _ = exc.args
+        if code == 0x6e01:
+            error_code = 'SSH_PGP_APP_NOT_READY'
+        elif code == 0x6b0c:
+            error_code = 'NEED_PIN'
+        else:
+            error_code = 'UNKNOWN'
+        output_json({
+            'type': 'error',
+            'error_code': error_code,
+            'error_str': str(exc),
+        })
+        return
+    except trezorlib.transport.DeviceIsBusy as exc:
+        # This appears to happen when the Trezor is just powered on and not yet unlocked with the PIN
+        # Running the trezor suite and unlocking it fixes that
+        output_json({
+            'type': 'error',
+            'error_code': 'DEVICE_IS_BUSY',
+            'error_str': str(exc),
+        })
+        return
+    except trezorlib.exceptions.Cancelled as exc:
+        output_json({
+            'type': 'error',
+            'error_code': 'CANCELLED',
+            'error_str': str(exc),
+        })
+        return
 
     if args.out is not None:
         with open(args.out, 'w') as p:
@@ -107,9 +180,15 @@ def main() -> None:
             print(f'Wrote {what} for {args.identity} to {args.out}')
     else:
         if args.sign is None:
-            print(pem_encode(out))
+            output_json({
+                'type': 'public_key',
+                'pem': pem_encode(out),
+            })
         else:
-            print(out.hex())
+            output_json({
+                'type': 'signature',
+                'signature': list(out),
+            })
 
 if __name__ == '__main__':
     main()
